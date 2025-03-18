@@ -3,6 +3,10 @@
 % 2025. 03. 06 
 % Yong Guk Kang
 
+% 2025. 03. 18 
+% Fix bug related to load motor configuration
+% add Error handler
+
 classdef Kinesis < handle
     properties
         Device
@@ -49,21 +53,26 @@ classdef Kinesis < handle
             else
                 error('Unknown device type');
             end
-            
-            try
-                obj.Device.Connect(serialNumber);
-                obj.Device.WaitForSettingsInitialized(5000);
-                obj.Device.StartPolling(250);
-                fprintf("[%s] Device Connected : %s \n", obj.DeviceType, serialNumber);
-                mc = obj.Device.LoadMotorConfiguration(obj.Device.DeviceID);
 
+            try
+                % 접속 - 설정 load - 추가설정 - wait
+                obj.Device.Connect(serialNumber);
+                obj.Device.WaitForSettingsInitialized(obj.Timeout);
+                obj.Device.StartPolling(250);
+                fprintf("[%s] Device Connected : %s ...", obj.DeviceType, serialNumber);
+
+                obj.Device.LoadMotorConfiguration(obj.SerialNumber);
                 obj.Device.EnableDevice();
-                pause(0.1);
+                obj.Device.SetHomingVelocity(2);
+
+                % device_info = obj.Device.GetDeviceInfo();
+                % fprintf("[%s] Device Enabled\n [%s]", obj.DeviceType, device_info.Description);
                 obj.Device.WaitForSettingsInitialized(5000);
-                fprintf("[%s] Device Enabled\n", obj.DeviceType);
+                fprintf("Device Enabled\n", obj.DeviceType);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
@@ -75,10 +84,11 @@ classdef Kinesis < handle
                 while obj.Device.IsDeviceBusy()
                     pause(0.1);
                 end
-                fprintf("[%s] Homed\n", obj.DeviceType);
+                fprintf("Homed\n");
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
@@ -90,10 +100,11 @@ classdef Kinesis < handle
                 while obj.Device.IsDeviceBusy()
                     pause(0.1);
                 end
-                fprintf("[%s] Moved\n", obj.DeviceType);
+                fprintf("Moved\n", obj.DeviceType);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
@@ -106,10 +117,11 @@ classdef Kinesis < handle
                 while obj.Device.IsDeviceBusy()
                     pause(0.1);
                 end
-                fprintf("[%s] Moved\n", obj.DeviceType);
+                fprintf("Moved\n", obj.DeviceType);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
@@ -120,11 +132,27 @@ classdef Kinesis < handle
                 CurrLoc = System.Decimal.ToDouble(obj.Device.DevicePosition);
                 % fprintf("Current Location : %.2f mm \n\n", CurrLoc);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
+        function [limitMin, limitMax] = GetLimits(obj)
+            % Get current position
+            limitMin=[];
+            limitMax=[];
+            try
+               lim_params = obj.Device.AdvancedMotorLimits;
+               limitMin = System.Decimal.ToDouble(lim_params.LengthMinimum);
+               limitMax = System.Decimal.ToDouble(lim_params.LengthMaximum);
+            catch e
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
+            end
+        end
+
         function [maxV, accel] = GetVelocity(obj)
             % Get current velocity
             maxV = [];
@@ -135,8 +163,9 @@ classdef Kinesis < handle
                 accel = System.Decimal.ToDouble(vel_params.Acceleration);
                 % fprintf('Velocity: %.2f , Acceleration: %.2f\n\n', maxV, accel);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
         
@@ -145,11 +174,12 @@ classdef Kinesis < handle
             try
                 obj.Device.SetVelocityParams(maxV, accel);
             catch e
-                fprintf("Error: %s\n", e.message);
-                obj.disconnectStage();
+                % fprintf("Error: %s\n", e.message);
+                % obj.disconnectStage();
+                obj.ErrorHandler(e)
             end
         end
-        
+
         function disconnectStage(obj)
             % Disconnect and clean up device
             try
@@ -165,6 +195,18 @@ classdef Kinesis < handle
         function delete(obj)
             % Destructor to ensure cleanup
             obj.disconnectStage();
+        end
+
+        function ErrorHandler(obj, errorHandle)
+            getID = errorHandle.identifier;
+            switch getID
+                case 'MATLAB:NET:CLRException:MethodInvoke'
+                    warning('\n **Please check the position Limit**');
+                otherwise
+                    warning('Unknown Error : Disconnecting Stage');
+                    obj.disconnectStage();
+            end
+
         end
     end
 end
